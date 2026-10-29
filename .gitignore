@@ -21,9 +21,9 @@ data/uploads/*
 *.db
 *.sqlite3
 
-# Models cache (local download)
+# Models cache (local download at repo root — not backend/app/models)
 .cache/
-models/
+/models/
 
 # Node (frontend, later phases)
 node_modules/
