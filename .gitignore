@@ -1,0 +1,51 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+htmlcov/
+.coverage
+
+# Environment and secrets
+.env
+.env.local
+*.pem
+
+# Data (never commit private uploads)
+data/uploads/*
+!data/uploads/.gitkeep
+*.db
+*.sqlite3
+
+# Models cache (local download)
+.cache/
+models/
+
+# Node (frontend, later phases)
+node_modules/
+dist/
+frontend/dist/
+
+# Playwright
+frontend/test-results/
+playwright-report/
+blob-report/
+
+# TypeScript incremental build
+*.tsbuildinfo
+
+# IDE
+.idea/
+.vscode/
+*.swp
+
+# OS
+.DS_Store
+
+# Logs
+logs/
+*.log

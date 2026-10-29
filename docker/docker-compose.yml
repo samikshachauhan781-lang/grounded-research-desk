@@ -1,0 +1,15 @@
+services:
+  api:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile
+    ports:
+      - "8000:8000"
+    environment:
+      APP_ENV: development
+      API_HOST: 0.0.0.0
+      EMBEDDING_PROVIDER: fake
+      LLM_PROVIDER: mock
+      DATABASE_URL: sqlite:///./data/grounded_research.db
+    volumes:
+      - ../data:/app/data

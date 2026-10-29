@@ -1,0 +1,16 @@
+[
+  {
+    "id": "rollback-01",
+    "document_fixture": "sample.md",
+    "question": "What command rolls back the database migration?",
+    "expected_substring": "flyway rollback",
+    "notes": "Phase 4 retrieval golden test"
+  },
+  {
+    "id": "latency-01",
+    "document_fixture": "sample.md",
+    "question": "When should we scale API replicas for checkout latency?",
+    "expected_substring": "scale API replicas to 3",
+    "notes": "Semantic match test"
+  }
+]

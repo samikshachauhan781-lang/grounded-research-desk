@@ -1,0 +1,84 @@
+/* Grounded Research Desk — design tokens */
+
+:root {
+  color-scheme: light;
+
+  --grd-bg-app: #f3f4f6;
+  --grd-bg-sidebar: #fafafa;
+  --grd-bg-workspace: #ffffff;
+  --grd-bg-elevated: #ffffff;
+  --grd-bg-muted: #f6f7f9;
+  --grd-bg-inset: #eceef2;
+  --grd-bg-hover: #eef0f3;
+
+  --grd-text-primary: #18181b;
+  --grd-text-secondary: #3f3f46;
+  --grd-text-muted: #71717a;
+  --grd-text-inverse: #ffffff;
+
+  --grd-border-subtle: #e4e4e7;
+  --grd-border-strong: #d4d4d8;
+  --grd-divider: #ececee;
+
+  --grd-accent: #0f766e;
+  --grd-accent-hover: #0d5c56;
+  --grd-accent-subtle: #f0fdfa;
+  --grd-accent-ink: #115e59;
+  --grd-focus-ring: #0f766e;
+
+  --grd-evidence-bg: #f7faf9;
+  --grd-evidence-border: #99f6e4;
+  --grd-evidence-highlight: #ecfdf5;
+
+  --grd-success: #047857;
+  --grd-success-bg: #ecfdf5;
+  --grd-warning: #b45309;
+  --grd-warning-bg: #fffbeb;
+  --grd-error: #b91c1c;
+  --grd-error-bg: #fef2f2;
+  --grd-info: #1d4ed8;
+  --grd-info-bg: #eff6ff;
+
+  --grd-font-sans: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+  --grd-font-mono: ui-monospace, "SFMono-Regular", Menlo, Monaco, Consolas, monospace;
+  --grd-text-xs: 0.75rem;
+  --grd-text-sm: 0.8125rem;
+  --grd-text-base: 0.9375rem;
+  --grd-text-lg: 1.0625rem;
+  --grd-text-xl: 1.25rem;
+  --grd-text-2xl: 1.5rem;
+  --grd-leading: 1.6;
+  --grd-leading-tight: 1.35;
+
+  --grd-space-1: 0.25rem;
+  --grd-space-2: 0.5rem;
+  --grd-space-3: 0.75rem;
+  --grd-space-4: 1rem;
+  --grd-space-5: 1.25rem;
+  --grd-space-6: 1.5rem;
+  --grd-space-8: 2rem;
+  --grd-space-10: 2.5rem;
+
+  --grd-sidebar-width: 232px;
+  --grd-inspector-width: 360px;
+  --grd-topbar-height: 52px;
+  --grd-content-max: 680px;
+  --grd-page-max: 960px;
+  --grd-control-height: 36px;
+  --grd-radius-sm: 6px;
+  --grd-radius-md: 8px;
+  --grd-radius-lg: 12px;
+  --grd-shadow-sm: 0 1px 2px rgba(24, 24, 27, 0.05);
+  --grd-shadow-md: 0 8px 24px rgba(24, 24, 27, 0.08);
+  --grd-duration: 140ms;
+  --grd-ease: cubic-bezier(0.2, 0.8, 0.2, 1);
+
+  --grd-bp-tablet: 1024px;
+  --grd-bp-mobile: 768px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  :root {
+    --grd-duration: 1ms;
+  }
+}
