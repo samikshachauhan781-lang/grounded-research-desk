@@ -8,7 +8,11 @@ from sqlalchemy.orm import Session
 from backend.app.core.config import Settings
 from backend.app.database.models import ResearchSession, SessionMessage, utc_now_iso
 from backend.app.models.schemas import AskResponse
-from backend.app.providers.llm import build_citations, get_generation_provider
+from backend.app.providers.llm import (
+    build_citations,
+    get_generation_provider,
+    synthesis_failed,
+)
 from backend.app.rag.evidence_policy import (
     INSUFFICIENT_EVIDENCE_MESSAGE,
     assess_retrieval_sufficiency,
@@ -84,16 +88,38 @@ def ask_question(
 
     context_blocks = [(r.chunk_id, r.snippet) for r in retrieval.results]
     provider = get_generation_provider(settings)
-    answer_text, cited_ids = provider.generate_answer(
+    synthesis = provider.generate_answer(
         question,
         context_blocks,
         settings.generation_timeout_seconds,
     )
 
-    valid_ids = [cid for cid in cited_ids if cid in citation_map]
-    if not valid_ids:
-        valid_ids = [retrieval.results[0].chunk_id]
+    if synthesis_failed(synthesis) or not synthesis.source_chunk_id:
+        response = AskResponse(
+            answer=INSUFFICIENT_EVIDENCE_MESSAGE,
+            citations=[],
+            insufficient_evidence=True,
+            retrieval={
+                **retrieval_meta,
+                "synthesis_reason": synthesis.reason,
+            },
+            request_id=request_id,
+            session_id=session_id,
+        )
+        _maybe_persist_session(db, session_id, question, response)
+        record_activity(
+            db,
+            "answer_generated",
+            {
+                "request_id": request_id,
+                "grounded": False,
+                "reason": synthesis.reason,
+            },
+        )
+        return response
 
+    answer_text = synthesis.answer
+    valid_ids = [synthesis.source_chunk_id]
     final_citations = build_citations(valid_ids, citation_map)
 
     response = AskResponse(

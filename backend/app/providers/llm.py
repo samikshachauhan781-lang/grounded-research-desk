@@ -1,7 +1,6 @@
 """LLM generation providers."""
 
 from abc import ABC, abstractmethod
-import json
 import re
 
 import httpx
@@ -9,7 +8,12 @@ import httpx
 from backend.app.core.config import Settings
 from backend.app.core.exceptions import LLMProviderError, LLMTimeoutError
 from backend.app.models.schemas import Citation
+from backend.app.rag.evidence_answer import (
+    synthesize_answer_from_evidence,
+    validate_cited_chunk_provenance,
+)
 from backend.app.rag.prompt_guard import build_grounded_generation_prompt
+from backend.app.rag.synthesis_result import SynthesisResult, SynthesisStatus
 
 
 class GenerationProvider(ABC):
@@ -19,33 +23,25 @@ class GenerationProvider(ABC):
         question: str,
         context_blocks: list[tuple[str, str]],
         timeout_seconds: int,
-    ) -> tuple[str, list[str]]:
-        """Return answer text and chunk ids cited in the answer."""
+    ) -> SynthesisResult:
+        """Return synthesis outcome with answer text and source chunk on success."""
         raise NotImplementedError
 
 
 class MockGenerationProvider(GenerationProvider):
-    """Deterministic grounded answers for tests."""
+    """Deterministic grounded answers extracted from retrieved evidence (not an LLM)."""
+
+    def __init__(self, settings: Settings) -> None:
+        self._settings = settings
 
     def generate_answer(
         self,
         question: str,
         context_blocks: list[tuple[str, str]],
         timeout_seconds: int,
-    ) -> tuple[str, list[str]]:
+    ) -> SynthesisResult:
         _ = timeout_seconds
-        if not context_blocks:
-            return (
-                "No relevant passages found in your documents.",
-                [],
-            )
-        best_id, best_text = context_blocks[0]
-        snippet = best_text.strip().split("\n")[0][:240]
-        answer = (
-            f"Based on the retrieved evidence: {snippet} "
-            f"[chunk:{best_id}]"
-        )
-        return answer, [best_id]
+        return synthesize_answer_from_evidence(question, context_blocks, self._settings)
 
 
 class OllamaGenerationProvider(GenerationProvider):
@@ -57,9 +53,9 @@ class OllamaGenerationProvider(GenerationProvider):
         question: str,
         context_blocks: list[tuple[str, str]],
         timeout_seconds: int,
-    ) -> tuple[str, list[str]]:
+    ) -> SynthesisResult:
         if not context_blocks:
-            return ("No relevant passages found in your documents.", [])
+            return SynthesisResult.insufficient("no_context_blocks")
 
         prompt = build_grounded_generation_prompt(question, context_blocks)
         url = f"{self._settings.ollama_base_url.rstrip('/')}/api/generate"
@@ -81,17 +77,34 @@ class OllamaGenerationProvider(GenerationProvider):
             raise LLMProviderError(f"Ollama unavailable: {exc}") from exc
 
         answer = str(data.get("response", "")).strip()
+        if not answer:
+            return SynthesisResult.insufficient("empty_model_response")
+
         cited = re.findall(r"\[chunk:([a-f0-9-]{36})\]", answer, flags=re.IGNORECASE)
         if not cited:
             cited = re.findall(r"\[([a-f0-9-]{36})\]", answer)
         valid = [cid for cid in cited if any(cid == block[0] for block in context_blocks)]
-        return answer, valid
+        if not valid:
+            return SynthesisResult.insufficient("missing_chunk_citation")
+
+        cited_id = valid[0]
+        provenance_ok, provenance_reason = validate_cited_chunk_provenance(
+            question,
+            answer,
+            cited_id,
+            context_blocks,
+            self._settings,
+        )
+        if not provenance_ok:
+            return SynthesisResult.insufficient(provenance_reason)
+
+        return SynthesisResult.success(answer, cited_id)
 
 
 def get_generation_provider(settings: Settings) -> GenerationProvider:
     if settings.llm_provider == "ollama":
         return OllamaGenerationProvider(settings)
-    return MockGenerationProvider()
+    return MockGenerationProvider(settings)
 
 
 def build_citations(
@@ -116,3 +129,7 @@ def build_citations(
             ),
         )
     return citations
+
+
+def synthesis_failed(result: SynthesisResult) -> bool:
+    return result.status != SynthesisStatus.SUCCESS

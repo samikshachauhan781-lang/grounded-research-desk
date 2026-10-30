@@ -53,6 +53,11 @@ def _content_tokens(text: str) -> set[str]:
     return {t for t in tokens if len(t) > 1 and t not in _STOPWORDS}
 
 
+def content_tokens(text: str) -> set[str]:
+    """Content tokens for overlap and answer-level validation."""
+    return _content_tokens(text)
+
+
 def lexical_overlap_ratio(question: str, passage: str) -> float:
     """Share of question content tokens that appear in the passage."""
     q_tokens = _content_tokens(question)

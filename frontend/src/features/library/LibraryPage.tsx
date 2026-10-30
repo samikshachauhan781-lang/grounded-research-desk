@@ -1,11 +1,18 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { Link } from "react-router-dom";
-import { api, ApiError, type DocumentItem, type PublicSettings } from "../../lib/api/client";
+import { api, type DocumentItem, type PublicSettings } from "../../lib/api/client";
+import { resolveUploadErrorMessage } from "../../lib/api/errorMessage";
 import { ConfirmDialog } from "../../components/ui/ConfirmDialog";
 import { EmptyState } from "../../components/ui/EmptyState";
 import { Icon } from "../../components/icons/Icon";
 import { PageHeader } from "../../components/ui/PageHeader";
 import { useToast } from "../../components/ui/Toast";
+import {
+  filePickerAcceptAttribute,
+  resolveAllowedExtensions,
+  supportedFormatsLabel,
+  validateClientUpload,
+} from "./uploadValidation";
 
 function statusTone(status: string) {
   if (status === "completed" || status === "indexed") return "success";
@@ -15,6 +22,8 @@ function statusTone(status: string) {
 
 export function LibraryPage() {
   const { notify } = useToast();
+  const fileInputRef = useRef<HTMLInputElement>(null);
+  const uploadInFlightRef = useRef(false);
   const [docs, setDocs] = useState<DocumentItem[]>([]);
   const [total, setTotal] = useState(0);
   const [loading, setLoading] = useState(true);
@@ -25,6 +34,10 @@ export function LibraryPage() {
   const [settings, setSettings] = useState<PublicSettings | null>(null);
   const [pendingDelete, setPendingDelete] = useState<DocumentItem | null>(null);
   const [deleting, setDeleting] = useState(false);
+
+  const allowedExtensions = resolveAllowedExtensions(settings);
+  const acceptAttribute = filePickerAcceptAttribute(allowedExtensions);
+  const formatsLabel = supportedFormatsLabel(allowedExtensions);
 
   const refresh = useCallback(async () => {
     setLoading(true);
@@ -47,6 +60,20 @@ export function LibraryPage() {
 
   async function onUpload(file: File | null) {
     if (!file) return;
+    if (uploading || uploadInFlightRef.current) {
+      return;
+    }
+
+    const clientCheck = validateClientUpload(file, allowedExtensions);
+    if (!clientCheck.ok) {
+      setError(clientCheck.message);
+      if (fileInputRef.current) {
+        fileInputRef.current.value = "";
+      }
+      return;
+    }
+
+    uploadInFlightRef.current = true;
     setUploading(true);
     setError(null);
     try {
@@ -54,13 +81,13 @@ export function LibraryPage() {
       notify(`Indexed ${file.name}`);
       await refresh();
     } catch (err) {
-      if (err instanceof ApiError && err.status === 422) {
-        setError("This file couldn't be uploaded. Use UTF-8 .txt or .md within the size limit.");
-      } else {
-        setError("Upload failed. Please try again.");
-      }
+      setError(resolveUploadErrorMessage(err, settings?.max_upload_bytes));
     } finally {
+      uploadInFlightRef.current = false;
       setUploading(false);
+      if (fileInputRef.current) {
+        fileInputRef.current.value = "";
+      }
     }
   }
 
@@ -81,7 +108,6 @@ export function LibraryPage() {
 
   const filtered = docs.filter((d) => d.filename.toLowerCase().includes(filter.toLowerCase()));
   const maxMb = settings ? Math.round(settings.max_upload_bytes / 1024 / 1024) : 5;
-  const exts = settings?.allowed_upload_extensions.join(", ") ?? ".md, .txt";
 
   return (
     <div className="grd-page grd-page-wide">
@@ -93,8 +119,9 @@ export function LibraryPage() {
             <Icon name="upload" size={14} />
             {uploading ? "Uploading…" : "Upload documents"}
             <input
+              ref={fileInputRef}
               type="file"
-              accept=".md,.txt"
+              accept={acceptAttribute}
               style={{ display: "none" }}
               disabled={uploading}
               onChange={(e) => void onUpload(e.target.files?.[0] ?? null)}
@@ -113,6 +140,9 @@ export function LibraryPage() {
         onDrop={(e) => {
           e.preventDefault();
           setDragActive(false);
+          if (uploading || uploadInFlightRef.current) {
+            return;
+          }
           void onUpload(e.dataTransfer.files[0] ?? null);
         }}
       >
@@ -120,7 +150,7 @@ export function LibraryPage() {
         <div>
           Drop a file here, or use Upload documents.
           <div className="grd-meta" style={{ marginTop: 4 }}>
-            {exts} · up to {maxMb} MB
+            {formatsLabel} · up to {maxMb} MB
           </div>
         </div>
       </div>
@@ -137,7 +167,7 @@ export function LibraryPage() {
       </div>
 
       {error ? (
-        <div className="grd-alert error" style={{ marginBottom: "1rem" }}>
+        <div className="grd-alert error" role="alert" style={{ marginBottom: "1rem" }}>
           {error}
         </div>
       ) : null}

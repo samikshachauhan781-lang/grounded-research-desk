@@ -16,7 +16,11 @@ from backend.app.core.config import Settings
 from backend.app.core.exceptions import AgentBudgetExceededError, AgentDisabledError
 from backend.app.database.models import AgentRun, utc_now_iso
 from backend.app.models.schemas import AgentStep, Citation, ResearchResponse
-from backend.app.providers.llm import build_citations, get_generation_provider
+from backend.app.providers.llm import (
+    build_citations,
+    get_generation_provider,
+    synthesis_failed,
+)
 from backend.app.rag.evidence_policy import (
     INSUFFICIENT_EVIDENCE_MESSAGE,
     assess_retrieval_sufficiency,
@@ -146,14 +150,33 @@ def run_research(
         check_budget()
 
     provider = get_generation_provider(settings)
-    answer, cited_ids = provider.generate_answer(
+    synthesis = provider.generate_answer(
         goal,
         context_blocks,
         settings.generation_timeout_seconds,
     )
-    if not cited_ids and retrieval.results:
-        cited_ids = [retrieval.results[0].chunk_id]
-    final_citations = build_citations(cited_ids, citation_map)
+    if synthesis_failed(synthesis) or not synthesis.source_chunk_id:
+        answer = INSUFFICIENT_EVIDENCE_MESSAGE
+        run.status = "completed"
+        run.answer = answer
+        run.steps_json = json.dumps([s.model_dump() for s in steps])
+        run.completed_at = utc_now_iso()
+        db.commit()
+        record_activity(
+            db,
+            "agent_run_completed",
+            {"run_id": run_id, "status": run.status, "reason": synthesis.reason},
+        )
+        return ResearchResponse(
+            answer=answer,
+            citations=[],
+            steps=steps,
+            status="completed",
+            request_id=request_id,
+        )
+
+    answer = synthesis.answer
+    final_citations = build_citations([synthesis.source_chunk_id], citation_map)
 
     steps.append(
         AgentStep(
