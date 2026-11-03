@@ -6,7 +6,7 @@ import uuid
 from sqlalchemy.orm import Session
 
 from backend.app.core.config import Settings
-from backend.app.database.models import Chunk, ResearchSession, SessionMessage, utc_now_iso
+from backend.app.database.models import ResearchSession, SessionMessage, utc_now_iso
 from backend.app.models.schemas import AskResponse
 from backend.app.providers.llm import (
     build_citations,
@@ -17,8 +17,8 @@ from backend.app.rag.evidence_policy import (
     INSUFFICIENT_EVIDENCE_MESSAGE,
     assess_retrieval_sufficiency,
 )
-from backend.app.rag.evidence_answer import clip_chunk_text_for_synthesis
 from backend.app.services.activity import record_activity
+from backend.app.services.generation.synthesis_context import build_synthesis_context_blocks
 from backend.app.services.retrieval.search_service import (
     search_chunks,
     search_results_to_citations,
@@ -87,7 +87,7 @@ def ask_question(
     citations = search_results_to_citations(retrieval.results)
     citation_map = {c.chunk_id: c for c in citations}
 
-    context_blocks = _synthesis_context_blocks(db, retrieval.results)
+    context_blocks = build_synthesis_context_blocks(db, retrieval.results)
     provider = get_generation_provider(settings)
     synthesis = provider.generate_answer(
         question,
@@ -120,7 +120,11 @@ def ask_question(
         return response
 
     answer_text = synthesis.answer
-    valid_ids = [synthesis.source_chunk_id]
+    valid_ids = (
+        list(synthesis.source_chunk_ids)
+        if synthesis.source_chunk_ids
+        else [synthesis.source_chunk_id]
+    )
     final_citations = build_citations(valid_ids, citation_map)
 
     response = AskResponse(
@@ -138,19 +142,6 @@ def ask_question(
         {"request_id": request_id, "citation_count": len(final_citations)},
     )
     return response
-
-
-def _synthesis_context_blocks(
-    db: Session,
-    results: list,
-) -> list[tuple[str, str]]:
-    """Pass full chunk text (clipped) to synthesis; retrieval ranking unchanged."""
-    blocks: list[tuple[str, str]] = []
-    for item in results:
-        chunk = db.get(Chunk, item.chunk_id)
-        raw = chunk.text if chunk is not None else item.snippet
-        blocks.append((item.chunk_id, clip_chunk_text_for_synthesis(raw)))
-    return blocks
 
 
 def _maybe_persist_session(

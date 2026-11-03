@@ -17,14 +17,28 @@ class SynthesisResult:
     status: SynthesisStatus
     answer: str = ""
     source_chunk_id: str | None = None
+    source_chunk_ids: tuple[str, ...] = ()
     reason: str = ""
 
     @classmethod
-    def success(cls, answer: str, source_chunk_id: str) -> SynthesisResult:
+    def success(
+        cls,
+        answer: str,
+        source_chunk_id: str,
+        source_chunk_ids: tuple[str, ...] | list[str] | None = None,
+    ) -> SynthesisResult:
+        if source_chunk_ids is None:
+            ids: tuple[str, ...] = (source_chunk_id,)
+        else:
+            ids = tuple(source_chunk_ids)
+            if not ids:
+                ids = (source_chunk_id,)
+        primary = source_chunk_id if source_chunk_id in ids else ids[0]
         return cls(
             status=SynthesisStatus.SUCCESS,
             answer=answer,
-            source_chunk_id=source_chunk_id,
+            source_chunk_id=primary,
+            source_chunk_ids=ids,
         )
 
     @classmethod

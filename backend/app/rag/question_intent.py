@@ -34,6 +34,78 @@ def asks_for_file(question: str) -> bool:
     )
 
 
+def asks_for_multiple_files(question: str) -> bool:
+    q = _q_lower(question)
+    if "which files" in q or "what files" in q:
+        return True
+    if re.search(r"\bfiles\b", q) and re.search(r"\b(both|all|list|name)\b", q):
+        return True
+    if asks_for_file(question) and re.search(r"\bfiles\b", q):
+        return True
+    return False
+
+
+def asks_for_file_attributes(question: str) -> bool:
+    q = _q_lower(question)
+    if "file" not in q and "files" not in q:
+        return False
+    return any(
+        phrase in q
+        for phrase in (
+            "line count",
+            "line counts",
+            "responsibilit",
+            "with their line",
+            "with their lines",
+            "purpose",
+        )
+    ) or (re.search(r"\blines?\b", q) and re.search(r"\b(responsibilit|purpose|contain)\b", q))
+
+
+def asks_for_directory_overview(question: str) -> bool:
+    q = _q_lower(question)
+    if asks_for_command(question) or asks_for_multiple_files(question):
+        return False
+    if asks_for_file_attributes(question):
+        return False
+    if asks_for_development_status(question):
+        return False
+    if "directory" in q and any(word in q for word in ("about", "explain", "describe")):
+        return True
+    if "project" in q and "about" in q:
+        return True
+    return False
+
+
+def asks_for_development_status(question: str) -> bool:
+    """True when the question asks for project/development/implementation status or progress."""
+    q = _q_lower(question)
+    if re.search(r"\bdevelopment\s+status\b", q):
+        return True
+    if re.search(r"\bproject\s+status\b", q):
+        return True
+    if re.search(r"\bimplementation\s+status\b", q):
+        return True
+    if re.search(r"\b(?:reported|current)\b", q) and re.search(r"\bstatus\b", q):
+        return True
+    if re.search(r"\bstatus\s+of\s+(?:the\s+)?project\b", q):
+        return True
+    if re.search(r"\bimplementation\s+progress\b", q):
+        return True
+    if re.search(r"\bprogress\s+of\s+(?:the\s+)?(?:project|implementation)\b", q):
+        return True
+    return False
+
+
+def multi_file_inventory_applies(question: str) -> bool:
+    if asks_for_multiple_files(question):
+        return True
+    return asks_for_file_attributes(question) and re.search(
+        r"\b(both|all|list)\b",
+        question.lower(),
+    )
+
+
 _RESOLUTION_OUTCOME = ("resolved", "fixed", "restored", "recovered")
 
 
@@ -105,10 +177,11 @@ def _seeks_prohibited_secret(question: str) -> bool:
 
 def asks_for_command(question: str) -> bool:
     q = _q_lower(question)
+    if re.search(r"\bcommands?\b", q):
+        return True
     return any(
         phrase in q
         for phrase in (
-            "command",
             "run ",
             "execute",
             "how do i",

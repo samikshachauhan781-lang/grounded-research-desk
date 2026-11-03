@@ -8,7 +8,6 @@ from sqlalchemy.orm import Session
 
 from backend.app.agents.tools import (
     tool_compare_evidence,
-    tool_get_chunk,
     tool_list_documents,
     tool_search_chunks,
 )
@@ -21,12 +20,12 @@ from backend.app.providers.llm import (
     get_generation_provider,
     synthesis_failed,
 )
-from backend.app.rag.evidence_answer import clip_chunk_text_for_synthesis
 from backend.app.rag.evidence_policy import (
     INSUFFICIENT_EVIDENCE_MESSAGE,
     assess_retrieval_sufficiency,
 )
 from backend.app.services.activity import record_activity
+from backend.app.services.generation.synthesis_context import build_synthesis_context_blocks
 from backend.app.services.retrieval.search_service import (
     search_chunks,
     search_results_to_citations,
@@ -143,14 +142,7 @@ def run_research(
             request_id=request_id,
         )
 
-    context_blocks: list[tuple[str, str]] = []
-    for result in retrieval.results[:3]:
-        chunk = tool_get_chunk(db, result.chunk_id)
-        context_blocks.append(
-            (chunk["chunk_id"], clip_chunk_text_for_synthesis(chunk["text"])),
-        )
-        tool_calls += 1
-        check_budget()
+    context_blocks = build_synthesis_context_blocks(db, retrieval.results)
 
     provider = get_generation_provider(settings)
     synthesis = provider.generate_answer(
@@ -179,7 +171,12 @@ def run_research(
         )
 
     answer = synthesis.answer
-    final_citations = build_citations([synthesis.source_chunk_id], citation_map)
+    valid_ids = (
+        list(synthesis.source_chunk_ids)
+        if synthesis.source_chunk_ids
+        else [synthesis.source_chunk_id]
+    )
+    final_citations = build_citations(valid_ids, citation_map)
 
     steps.append(
         AgentStep(

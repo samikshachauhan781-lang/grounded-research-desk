@@ -203,3 +203,20 @@ def test_validate_cited_chunk_provenance_accepts_matching_tag() -> None:
     ok, reason = validate_cited_chunk_provenance(question, answer, chunk_b, blocks, _settings())
     assert ok is True
     assert reason == "ok"
+
+
+def test_incident_commander_project_about_synthesizes_not_command_path() -> None:
+    chunk_id = "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"
+    chunk = (
+        "# Current DevOps Incident Commander Project\n\n"
+        "This directory contains the DevOps Incident Commander project with core application files."
+    )
+    question = "What is the DevOps Incident Commander project directory about?"
+    result = synthesize_answer_from_evidence(
+        question,
+        [(chunk_id, chunk)],
+        _settings(),
+    )
+    assert result.status == SynthesisStatus.SUCCESS
+    assert "directory contains" in result.answer.lower()
+    assert "flyway" not in result.answer.lower()
