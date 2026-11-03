@@ -9,6 +9,7 @@ from backend.app.core.config import Settings
 from backend.app.core.exceptions import LLMProviderError, LLMTimeoutError
 from backend.app.models.schemas import Citation
 from backend.app.rag.evidence_answer import (
+    strip_chunk_citation_tags,
     synthesize_answer_from_evidence,
     validate_cited_chunk_provenance,
 )
@@ -98,7 +99,8 @@ class OllamaGenerationProvider(GenerationProvider):
         if not provenance_ok:
             return SynthesisResult.insufficient(provenance_reason)
 
-        return SynthesisResult.success(answer, cited_id)
+        display_answer = strip_chunk_citation_tags(answer)
+        return SynthesisResult.success(display_answer, cited_id)
 
 
 def get_generation_provider(settings: Settings) -> GenerationProvider:

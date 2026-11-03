@@ -5,8 +5,26 @@ from __future__ import annotations
 import re
 
 from backend.app.core.config import Settings
+from backend.app.rag.incident_extraction import (
+    extract_metadata_value,
+    extract_resolution,
+    extract_root_cause,
+    extract_timeline_for_question,
+    format_metadata_answer,
+    format_timeline_answer,
+    timeline_events_for_question,
+)
 from backend.app.rag.evidence_policy import content_tokens, lexical_overlap_ratio
+from backend.app.rag.question_intent import (
+    QuestionIntent,
+    asks_for_command,
+    asks_for_file,
+    detect_metadata_field,
+    detect_question_intent,
+)
 from backend.app.rag.synthesis_result import SynthesisResult
+
+SYNTHESIS_MAX_CHUNK_CHARS = 8000
 
 _CODE_FENCE = re.compile(r"```(?:[\w+-]*\n)?(.*?)```", re.DOTALL)
 _BACKTICK = re.compile(r"`([^`]+)`")
@@ -16,37 +34,17 @@ _FILENAME = re.compile(
 )
 
 
+def clip_chunk_text_for_synthesis(text: str, max_chars: int = SYNTHESIS_MAX_CHUNK_CHARS) -> str:
+    """Bound text passed to synthesis while keeping full incident sections when possible."""
+    return text[:max_chars]
+
+
 def _question_lower(question: str) -> str:
     return question.lower().strip()
 
 
-def asks_for_file(question: str) -> bool:
-    q = _question_lower(question)
-    return any(
-        phrase in q
-        for phrase in (
-            "which file",
-            "what file",
-            "file contains",
-            "file has",
-            "filename",
-        )
-    )
-
-
 def _asks_for_command(question: str) -> bool:
-    q = _question_lower(question)
-    return any(
-        phrase in q
-        for phrase in (
-            "command",
-            "run ",
-            "execute",
-            "how do i",
-            "how to",
-            "what do i run",
-        )
-    )
+    return asks_for_command(question)
 
 
 def extract_filename_from_passage(passage: str) -> str | None:
@@ -290,6 +288,196 @@ def answer_grounded_in_cited_chunk(
     return False, "answer_cited_chunk_overlap"
 
 
+def _is_metadata_label_line(passage: str) -> bool:
+    return bool(re.match(r"^(incident id|service|severity|date)\s*:", passage.strip(), re.I))
+
+
+def _extract_intent_answer(
+    intent: QuestionIntent,
+    question: str,
+    text: str,
+    settings: Settings,
+) -> str | None:
+    if intent == QuestionIntent.ROOT_CAUSE:
+        value = extract_root_cause(text)
+        return value if value else None
+
+    if intent == QuestionIntent.RESOLUTION:
+        value = extract_resolution(text)
+        return value if value else None
+
+    if intent == QuestionIntent.TIMELINE:
+        return extract_timeline_for_question(text, question)
+
+    if intent == QuestionIntent.METADATA:
+        field = detect_metadata_field(question)
+        if field is None or field == "sensitive_missing":
+            return None
+        value = extract_metadata_value(text, field)
+        if value is None:
+            return None
+        return format_metadata_answer(field, value)
+
+    return None
+
+
+def _extract_general_answer(question: str, text: str, settings: Settings) -> str | None:
+    chunk_id = "x"
+    best_id, passage, _ = _pick_best_passage(question, [(chunk_id, text)])
+    _ = best_id
+    if not passage.strip():
+        return None
+    if _is_metadata_label_line(passage):
+        return None
+    supported, _ = passage_supports_question(question, passage, settings)
+    if not supported:
+        return None
+    return format_direct_answer(question, passage)
+
+
+def _timeline_event_key(event: tuple[int, str, str]) -> tuple[int, str]:
+    return (event[0], event[2].lower())
+
+
+def _timeline_chunks_with_events(
+    question: str,
+    context_blocks: list[tuple[str, str]],
+) -> list[tuple[str, list[tuple[int, str, str]], str]]:
+    contributing: list[tuple[str, list[tuple[int, str, str]], str]] = []
+    for chunk_id, text in context_blocks:
+        events = timeline_events_for_question(text, question)
+        if events:
+            contributing.append((chunk_id, events, text))
+    return contributing
+
+
+def timeline_spans_multiple_chunks(
+    question: str,
+    context_blocks: list[tuple[str, str]],
+) -> bool:
+    """True when in-range timeline events are split across chunks (no single chunk has all)."""
+    if detect_question_intent(question) != QuestionIntent.TIMELINE:
+        return False
+    contributing = _timeline_chunks_with_events(question, context_blocks)
+    if not contributing:
+        return False
+
+    union_keys: set[tuple[int, str]] = set()
+    for _, events, _ in contributing:
+        for event in events:
+            union_keys.add(_timeline_event_key(event))
+
+    for _, events, _ in contributing:
+        keys = {_timeline_event_key(event) for event in events}
+        if keys >= union_keys:
+            return False
+    return True
+
+
+def _plan_timeline_body(
+    question: str,
+    context_blocks: list[tuple[str, str]],
+) -> tuple[str, str] | None:
+    contributing = _timeline_chunks_with_events(question, context_blocks)
+    if not contributing:
+        return None
+
+    union_keys: set[tuple[int, str]] = set()
+    for _, events, _ in contributing:
+        for event in events:
+            union_keys.add(_timeline_event_key(event))
+
+    for chunk_id, events, text in contributing:
+        keys = {_timeline_event_key(event) for event in events}
+        if keys >= union_keys:
+            body = format_timeline_answer(events)
+            if _timeline_answer_grounded_in_text(body, text):
+                return chunk_id, body
+    return None
+
+
+def _plan_synthesis_body(
+    question: str,
+    context_blocks: list[tuple[str, str]],
+    settings: Settings,
+) -> tuple[str, str] | None:
+    """Return (chunk_id, answer_body) when evidence supports the question."""
+    intent = detect_question_intent(question)
+    field = detect_metadata_field(question)
+    if field == "sensitive_missing":
+        return None
+
+    if intent == QuestionIntent.TIMELINE:
+        return _plan_timeline_body(question, context_blocks)
+
+    if intent in {
+        QuestionIntent.FILE,
+        QuestionIntent.COMMAND,
+        QuestionIntent.GENERAL,
+    }:
+        for chunk_id, text in context_blocks:
+            if intent == QuestionIntent.FILE:
+                for passage in _candidate_passages(text):
+                    if extract_filename_from_passage(passage) is None:
+                        continue
+                    formatted = _format_file_answer(question, passage)
+                    if not formatted:
+                        continue
+                    supported, _ = passage_supports_question(question, passage, settings)
+                    if supported:
+                        return chunk_id, formatted
+            elif intent == QuestionIntent.COMMAND:
+                for passage in _candidate_passages(text):
+                    cmd = _format_command_answer(question, passage)
+                    if cmd and _command_evidence_bridge(question, passage):
+                        return chunk_id, cmd
+            else:
+                body = _extract_general_answer(question, text, settings)
+                if body:
+                    return chunk_id, body
+        return None
+
+    for chunk_id, text in context_blocks:
+        body = _extract_intent_answer(intent, question, text, settings)
+        if not body:
+            continue
+        if intent == QuestionIntent.ROOT_CAUSE and extract_root_cause(text) is None:
+            continue
+        if intent == QuestionIntent.RESOLUTION and extract_resolution(text) is None:
+            continue
+        if intent == QuestionIntent.METADATA:
+            return chunk_id, body
+        if body.lower() in text.lower() or lexical_overlap_ratio(body, text) >= settings.evidence_min_lexical_overlap:
+            return chunk_id, body
+    return None
+
+
+def _timeline_answer_grounded_in_text(answer: str, source: str) -> bool:
+    def norm(value: str) -> str:
+        return value.lower().replace("—", "-").replace("–", "-")
+
+    source_norm = norm(source)
+    for line in answer.split("\n"):
+        stripped = line.strip()
+        if not stripped.startswith("-"):
+            continue
+        core = norm(stripped.lstrip("-").strip())
+        if core not in source_norm:
+            return False
+    return True
+
+
+def resolve_synthesis_chunk_id(
+    question: str,
+    context_blocks: list[tuple[str, str]],
+    settings: Settings,
+) -> str | None:
+    planned = _plan_synthesis_body(question, context_blocks, settings)
+    if planned is None:
+        return None
+    return planned[0]
+
+
 def validate_cited_chunk_provenance(
     question: str,
     answer: str,
@@ -297,25 +485,28 @@ def validate_cited_chunk_provenance(
     context_blocks: list[tuple[str, str]],
     settings: Settings,
 ) -> tuple[bool, str]:
-    """
-    Ensure an Ollama (or external) citation points at evidence that supports the answer.
-
-    Uses the same passage-selection and overlap rules as mock synthesis so a valid
-    tag id alone is not enough — the cited chunk must be the best supporting chunk
-    and the answer must be grounded in that chunk's text.
-    """
+    """Ensure an Ollama citation points at evidence that supports the answer."""
     block_map = dict(context_blocks)
     cited_text = block_map.get(cited_chunk_id)
     if cited_text is None:
         return False, "citation_not_in_context"
 
-    best_chunk_id, _, _ = _pick_best_passage(question, context_blocks)
-    if cited_chunk_id != best_chunk_id:
+    expected_chunk = resolve_synthesis_chunk_id(question, context_blocks, settings)
+    if expected_chunk is None:
+        return False, "cited_insufficient_evidence"
+    if cited_chunk_id != expected_chunk:
         return False, "citation_chunk_mismatch"
 
-    supported, reason = passage_supports_question(question, cited_text, settings)
-    if not supported:
-        return False, f"cited_{reason}"
+    planned = _plan_synthesis_body(question, context_blocks, settings)
+    if planned is None:
+        return False, "cited_insufficient_evidence"
+
+    body = strip_chunk_citation_tags(answer)
+    intent = detect_question_intent(question)
+    if intent == QuestionIntent.TIMELINE:
+        if not _timeline_answer_grounded_in_text(body, cited_text):
+            return False, "answer_fact_not_in_cited_chunk"
+        return True, "ok"
 
     grounded, ground_reason = answer_grounded_in_cited_chunk(answer, cited_text, settings)
     if not grounded:
@@ -329,26 +520,24 @@ def synthesize_answer_from_evidence(
     context_blocks: list[tuple[str, str]],
     settings: Settings,
 ) -> SynthesisResult:
-    """
-    Build a grounded mock answer from retrieved evidence.
-
-    Uses lexical overlap only — not a reasoning model. Fails closed when the
-    selected passage cannot support the question.
-    """
+    """Build a grounded mock answer from retrieved evidence (deterministic, fail-closed)."""
     if not context_blocks:
         return SynthesisResult.insufficient("no_context_blocks")
 
-    chunk_id, passage, _score = _pick_best_passage(question, context_blocks)
-    if not passage.strip():
+    planned = _plan_synthesis_body(question, context_blocks, settings)
+    if planned is None:
+        intent = detect_question_intent(question)
+        if intent == QuestionIntent.TIMELINE and timeline_spans_multiple_chunks(
+            question,
+            context_blocks,
+        ):
+            return SynthesisResult.insufficient("timeline_spans_multiple_chunks")
+        if intent == QuestionIntent.FILE:
+            return SynthesisResult.insufficient("file_question_no_filename")
+        return SynthesisResult.insufficient("unsupported_or_missing_evidence")
+
+    chunk_id, body = planned
+    if not body.strip():
         return SynthesisResult.insufficient("empty_passage")
 
-    supported, reason = passage_supports_question(question, passage, settings)
-    if not supported:
-        return SynthesisResult.insufficient(reason)
-
-    if asks_for_file(question) and _format_file_answer(question, passage) is None:
-        return SynthesisResult.insufficient("file_question_no_filename")
-
-    body = format_direct_answer(question, passage)
-    answer = f"{body} [chunk:{chunk_id}]"
-    return SynthesisResult.success(answer, chunk_id)
+    return SynthesisResult.success(body, chunk_id)

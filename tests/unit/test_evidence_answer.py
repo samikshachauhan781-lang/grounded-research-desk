@@ -44,7 +44,11 @@ test_day7_timeline.py
     assert result.status == SynthesisStatus.SUCCESS
     assert result.source_chunk_id == chunk_id
     assert "test_day7_timeline.py" in result.answer
-    assert f"[chunk:{chunk_id}]" in result.answer
+    assert_no_visible_chunk_tag(result.answer)
+
+
+def assert_no_visible_chunk_tag(answer: str) -> None:
+    assert "[chunk:" not in answer.lower()
 
 
 def test_command_question_from_code_line() -> None:
@@ -56,7 +60,7 @@ def test_command_question_from_code_line() -> None:
     assert "flyway rollback" in answer.lower()
 
 
-def test_synthesize_includes_chunk_citation_tag() -> None:
+def test_synthesize_visible_answer_has_no_chunk_marker() -> None:
     chunk_id = "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"
     blocks = [
         (
@@ -71,9 +75,9 @@ def test_synthesize_includes_chunk_citation_tag() -> None:
         _settings(),
     )
     assert result.status == SynthesisStatus.SUCCESS
-    assert f"[chunk:{chunk_id}]" in result.answer
     assert result.source_chunk_id == chunk_id
     assert "test_day7_timeline.py" in result.answer
+    assert "[chunk:" not in result.answer.lower()
     assert "Based on the retrieved evidence" not in result.answer
 
 
@@ -96,7 +100,7 @@ def test_synthesize_picks_passage_with_higher_overlap() -> None:
     assert result.status == SynthesisStatus.SUCCESS
     assert result.source_chunk_id == high_id
     assert "test_day7_timeline.py" in result.answer
-    assert f"[chunk:{high_id}]" in result.answer
+    assert "[chunk:" not in result.answer.lower()
 
 
 def test_vague_file_question_returns_insufficient() -> None:
@@ -153,8 +157,8 @@ def test_second_chunk_wins_citation_provenance() -> None:
     )
     assert result.status == SynthesisStatus.SUCCESS
     assert result.source_chunk_id == chunk_b
-    assert f"[chunk:{chunk_b}]" in result.answer
-    assert f"[chunk:{chunk_a}]" not in result.answer
+    assert f"[chunk:{chunk_b}]" not in result.answer
+    assert "[chunk:" not in result.answer.lower()
 
 
 def test_validate_cited_chunk_provenance_rejects_mismatched_tag() -> None:

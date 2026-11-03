@@ -21,6 +21,7 @@ from backend.app.providers.llm import (
     get_generation_provider,
     synthesis_failed,
 )
+from backend.app.rag.evidence_answer import clip_chunk_text_for_synthesis
 from backend.app.rag.evidence_policy import (
     INSUFFICIENT_EVIDENCE_MESSAGE,
     assess_retrieval_sufficiency,
@@ -145,7 +146,9 @@ def run_research(
     context_blocks: list[tuple[str, str]] = []
     for result in retrieval.results[:3]:
         chunk = tool_get_chunk(db, result.chunk_id)
-        context_blocks.append((chunk["chunk_id"], chunk["text"][:2000]))
+        context_blocks.append(
+            (chunk["chunk_id"], clip_chunk_text_for_synthesis(chunk["text"])),
+        )
         tool_calls += 1
         check_budget()
 

@@ -52,6 +52,7 @@ def test_ask_returns_citations(client: TestClient, sample_bytes: bytes) -> None:
     answer = body["answer"].lower()
     assert "flyway rollback" in answer
     assert "based on the retrieved evidence" not in answer
+    assert "[chunk:" not in answer
 
 
 def test_ask_file_question_answers_from_passage_not_title(
@@ -155,5 +156,6 @@ def test_ask_citation_matches_winning_chunk_not_first_retrieval_rank(
     assert body["citations"]
     cited_id = body["citations"][0]["chunk_id"]
     assert "test_day7_timeline.py" in body["answer"]
-    assert f"[chunk:{cited_id}]" in body["answer"]
+    assert f"[chunk:{cited_id}]" not in body["answer"]
+    assert "[chunk:" not in body["answer"].lower()
     assert "394 lines" not in body["answer"]

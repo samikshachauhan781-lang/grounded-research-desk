@@ -48,6 +48,7 @@ def test_ollama_parses_chunk_citations_from_response() -> None:
     assert result.status == SynthesisStatus.SUCCESS
     assert result.source_chunk_id == chunk_id
     assert "test_day7_timeline" in result.answer
+    assert "[chunk:" not in result.answer.lower()
     posted = client.post.call_args
     assert posted is not None
     prompt = posted.kwargs["json"]["prompt"]
